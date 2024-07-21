@@ -1,35 +1,87 @@
-﻿$url="https://google.com"
-# Пока переменную с урлом просто объявляем, вставить функцию выборки ее из параметра $1
+﻿param(
+    [string]$url
+)
 
+# Путь к файлу лога
+$logFile = "google_check.log"
 
-Function request # Функция с запросом, ее поочередно вызываем по три раза, сначала с http, потом с https
-        {
-        Invoke-WebRequest -Uri $url -UseDefaultCredentials -UseBasicParsing -Method Head -TimeoutSec 5 -ErrorAction Stop
-        $resultcode=$?
-        $statuscode = [int]$validation.StatusCode
+# Функция для записи в лог
+function Write-Log {
+    param([string]$message)
+    Add-Content -Path $logFile -Value "$(Get-Date): $message"
+}
+
+# Функция проверки сайта
+function WebRequest {
+    param([string]$url)
+
+    if (-not $url) {
+        $errMsg = "URL параметр отсутсвует."
+        Write-Host $errMsg
+        Write-Log $errMsg
+        return
+    }
+
+    $ports = 80, 443
+    $results = @()
+
+    foreach ($port in $ports) {
+        for ($i = 1; $i -lt 4; $i++) {
+            try {
+                $uri = "http://${url}:$port"
+                $stopwatch = New-Object System.Diagnostics.Stopwatch
+                $stopwatch.Start()
+                $response = Invoke-WebRequest -Uri $uri -TimeoutSec 10 -Method Head -ErrorAction SilentlyContinue
+                $stopwatch.Stop()
+                $success = $?
+                $statusCode = $response.StatusCode
+                $statusDescription = $response.StatusDescription
+                $timeTaken = $stopwatch.ElapsedMilliseconds
+                $message = "Порт $port Попытка ${i}: код ответа $statusCode - $statusDescription, Время ответа: $timeTaken ms"
+                Write-Host $message
+                Write-Log $message
+
+                $results += [PSCustomObject]@{
+                    TimeTaken = $timeTaken
+                    ContentLength = $response.RawContentLength
+                }
+
+                if ($statusCode -ne 200) {
+                    throw "Response code is not 200."
+                }
+            } catch {
+                $errorMessage = "Проблема подклчения $url по порту $port при попытке ${i}: $_"
+                Write-Host $errorMessage
+                Write-Log $errorMessage
+                continue
+            }
         }
+    }
 
-Function WebRequest
-        {
-                
-                request #Делаем запрос, получаем коды состояния и ответа вебсервера
-                Write-Output $resultcode
-                Write-Output $statuscode
-                
-                # Вот тут надо разобраться как правильно парсить коды, они неправильно сейчас педеаются 
+    # Если все итерации были успешны, вызов функций подсчета
+    if ($results) {
+       calcTime $results
+       calcWeight $results
+    }
+}
 
-                #$validationresult = (Invoke-WebRequest -Uri $url -UseDefaultCredentials -UseBasicParsing -Method Head -TimeoutSec 5 -ErrorAction Stop)
-                #$status = [int]$validation.StatusCode
-                #if ($validationresult="True")
-                #    {
-                 #   Write-Host "Сайт доступен"
-                 #   Write-Host $status
-                  #  }
-                    
- 
-                
-                
-                
-       }
+# Функция подсчета среднего времени ответа
+function calcTime {
+    param($results)
+    $averageTime = ($results.TimeTaken | Measure-Object -Average).Average
+    $message = "Среднее время отклика: ${averageTime} ms"
+    Write-Host $message
+    Write-Log $message
+}
 
-WebRequest
+# Функция подсчета среднего размера ответа
+function calcWeight {
+    param($results)
+    $averageSize = ($results.ContentLength | Measure-Object -Average).Average
+    $message = "Средний размер: ${averageSize} bytes"
+    Write-Host $message
+    Write-Log $message
+}
+
+# Запуск основной функции с проверкой URL
+WebRequest -url $url
